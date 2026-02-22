@@ -253,7 +253,7 @@ bot.callbackQuery(/^sub:(\d+):(.+)$/, async (ctx) => {
       reply_markup: new InlineKeyboard()
         .text("📥 1. Скачать книгу", `download_${bookId}`).row()
         .text("📋 2. Получить чек-лист", "send_checklist").row()
-        .webApp("🎰 3. Крутить рулетку!", `${WEBAPP_URL}?startapp=bot`).row()
+        .webApp("🎰 3. Крутить рулетку!", `${WEBAPP_URL}?screen=roulette`).row()
         .text("🎁 Подарить книгу другу = +1 🎟", `gift_${bookId}`),
     }
   );
@@ -362,7 +362,7 @@ bot.callbackQuery(/^download_(.+)$/, async (ctx) => {
       parse_mode: "Markdown",
       reply_markup: new InlineKeyboard()
         .text("📋 Чек-лист «5 точек роста»", "send_checklist").row()
-        .webApp("🎰 Крутить рулетку", `${WEBAPP_URL}?startapp=bot`).row()
+        .webApp("🎰 Крутить рулетку", `${WEBAPP_URL}?screen=roulette`).row()
         .text("🎁 Подарить книгу другу", `gift_${bookId}`).row()
         .text("« Меню", "main_menu"),
     }
@@ -387,7 +387,7 @@ bot.callbackQuery("send_checklist", async (ctx) => {
         {
           parse_mode: "Markdown",
           reply_markup: new InlineKeyboard()
-            .webApp("🎰 Крутить рулетку!", `${WEBAPP_URL}?startapp=bot`).row()
+            .webApp("🎰 Крутить рулетку!", `${WEBAPP_URL}?screen=roulette`).row()
             .webApp("🤖 Калькуляторы", WEBAPP_URL).row()
             .text("🎁 Подарить книгу = +1 🎟", "gift_partnership-strategy").row()
             .text("« Меню", "main_menu"),
@@ -530,7 +530,7 @@ bot.callbackQuery("open_roulette", async (ctx) => {
     {
       parse_mode: "Markdown",
       reply_markup: new InlineKeyboard()
-        .webApp("🎰 Крутить!", `${WEBAPP_URL}?startapp=bot`).row()
+        .webApp("🎰 Крутить!", `${WEBAPP_URL}?screen=roulette`).row()
         .text("« Меню", "main_menu"),
     }
   );
