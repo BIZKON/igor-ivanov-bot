@@ -1,0 +1,17 @@
+{
+  "name": "igor-ivanov-bot",
+  "version": "1.0.0",
+  "description": "Telegram bot for Igor Ivanov consulting — book club, roulette, partner system",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js",
+    "dev": "node --watch bot.js"
+  },
+  "dependencies": {
+    "grammy": "^1.21.1",
+    "@supabase/supabase-js": "^2.39.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
