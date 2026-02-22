@@ -404,12 +404,23 @@ bot.callbackQuery(/^gift_(.+)$/, async (ctx) => {
   const bookId = ctx.match[1];
   const b = BOOKS[bookId] || BOOKS["partnership-strategy"];
   const url = `https://t.me/${BOT_USERNAME}?start=gift_${ctx.from.id}_${bookId}`;
-  const shareText = `📚 Дарю тебе книгу «${b.title}» от эксперта Игоря Иванова!\n\n🎁 Внутри: книга + чек-лист + спин рулетки!\n\nЗабирай:`;
+  const senderName = ctx.from?.first_name || "Друг";
+
+  const shareText =
+    `🎁 ${senderName} дарит тебе бизнес-книгу!\n\n` +
+    `━━━━━━━━━━━━━━━━━━━━\n\n` +
+    `${b.emoji} «${b.title}»\n` +
+    `Автор: ${b.author}\n\n` +
+    `Что внутри подарка:\n` +
+    `📖 Книга в PDF — бесплатно\n` +
+    `📋 Чек-лист «5 точек роста бизнеса»\n` +
+    `🎰 Бесплатный спин рулетки призов\n\n` +
+    `━━━━━━━━━━━━━━━━━━━━\n\n` +
+    `👇 Нажми чтобы забрать подарок:\n${url}`;
 
   await safeEdit(ctx,
     `🎁 *Подарите книгу = 🎟 билет*\n\n` +
     `${b.emoji} «${b.title}»\n\n` +
-    `Ваша ссылка:\n\`${url}\`\n\n` +
     `📤 Отправьте другу. Когда он *подпишется* — вы получите 🎟\n\n` +
     `Друг получит *3 подарка:*\n` +
     `📖 Книгу  📋 Чек-лист  🎰 Рулетку\n\n` +
@@ -417,7 +428,7 @@ bot.callbackQuery(/^gift_(.+)$/, async (ctx) => {
     {
       parse_mode: "Markdown",
       reply_markup: new InlineKeyboard()
-        .url("📤 Отправить в Telegram", `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(shareText)}`).row()
+        .url("🎁 Отправить подарок другу", `https://t.me/share/url?text=${encodeURIComponent(shareText)}`).row()
         .text("📖 Другую книгу", "book_list").row()
         .text("🎟 Мои билеты", "my_tickets").text("« Меню", "main_menu"),
     }
