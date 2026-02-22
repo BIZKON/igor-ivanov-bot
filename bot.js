@@ -349,20 +349,20 @@ bot.callbackQuery("get_book", async (ctx) => {
 });
 
 bot.callbackQuery(/^download_(.+)$/, async (ctx) => {
-  await ctx.answerCallbackQuery("📥 Отправляем...");
+  await ctx.answerCallbackQuery("📖 Открываем...");
   const bookId = ctx.match[1];
   const b = BOOKS[bookId] || BOOKS["partnership-strategy"];
 
-  // TODO: await ctx.replyWithDocument(b.pdf_file_id); — после загрузки PDF
   await ctx.reply(
-    `📥 *«${b.title}»*\n\n` +
-    `⏳ PDF загружается — отправим сюда автоматически.\n\n` +
-    `А пока — заберите остальные подарки 👇`,
+    `📖 *«${b.title}»*\n\n` +
+    `${b.description}\n\n` +
+    `Внутри: 5 стратегий кросс-маркетинга, 16 приёмов работы с партнёрами, скрипты переговоров и кейсы.\n\n` +
+    `Читайте прямо здесь 👇`,
     {
       parse_mode: "Markdown",
       reply_markup: new InlineKeyboard()
+        .url("📖 Читать гайд", `https://t.me/${BOT_USERNAME}/app?startapp=book`).row()
         .text("📋 Чек-лист «5 точек роста»", "send_checklist").row()
-        .url("🎰 Крутить рулетку", `https://t.me/${BOT_USERNAME}/app?startapp=roulette`).row()
         .text("🎁 Подарить книгу другу", `gift_${bookId}`).row()
         .text("« Меню", "main_menu"),
     }
