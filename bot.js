@@ -131,7 +131,7 @@ function mainMenu() {
     .text("📖 Забрать книгу", "get_book").text("🎰 Рулетка", "open_roulette").row()
     .webApp("🤖 Mini App", WEBAPP_URL).row()
     .text("📊 Профиль", "my_profile").text("🏆 Топ", "leaderboard").row()
-    .text("🤝 Стать партнёром", "become_partner");
+    .webApp("🤝 Стать партнёром", `${WEBAPP_URL}/partner`);
 }
 
 // ─── /start ─────────────────────────────────────────────────
@@ -573,7 +573,7 @@ bot.callbackQuery("become_partner", async (ctx) => {
 bot.callbackQuery("partner_stats", async (ctx) => {
   await ctx.answerCallbackQuery();
   const { data: r } = await supabase.from("referrers").select("*").eq("telegram_id", ctx.from?.id).single();
-  if (!r) return ctx.reply("Вы не партнёр.", { reply_markup: new InlineKeyboard().text("🤝 Стать", "become_partner").text("« Меню", "main_menu") });
+  if (!r) return ctx.reply("Вы не партнёр.", { reply_markup: new InlineKeyboard().webApp("🤝 Стать", `${WEBAPP_URL}/partner`).text("« Меню", "main_menu") });
 
   await safeEdit(ctx,
     `📈 *Статистика*\n\n👆 ${r.total_clicks}\n👤 ${r.total_leads}\n💰 ${r.total_conversions}\n💵 ${r.total_earned.toLocaleString("ru")} ₽\n\nБаланс: *${r.balance.toLocaleString("ru")} ₽*`,
@@ -590,7 +590,7 @@ bot.callbackQuery("partner_stats", async (ctx) => {
 bot.callbackQuery("partner_balance", async (ctx) => {
   await ctx.answerCallbackQuery();
   const { data: r } = await supabase.from("referrers").select("*").eq("telegram_id", ctx.from?.id).single();
-  if (!r) return ctx.reply("Вы не партнёр.", { reply_markup: new InlineKeyboard().text("🤝 Стать", "become_partner") });
+  if (!r) return ctx.reply("Вы не партнёр.", { reply_markup: new InlineKeyboard().webApp("🤝 Стать", `${WEBAPP_URL}/partner`) });
 
   await safeEdit(ctx,
     `💰 *Баланс*\n\nК выводу: *${r.balance.toLocaleString("ru")} ₽*\nВсего: *${r.total_earned.toLocaleString("ru")} ₽*\n\n` +
@@ -628,7 +628,7 @@ bot.on("message:text", async (ctx) => {
 const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && req.url === "/") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "ok", bot: BOT_USERNAME, v: "2.0" }));
+    return res.end(JSON.stringify({ status: "ok", bot: BOT_USERNAME, v: "2.1-partner-webapp" }));
   }
   if (req.method === "POST" && req.url === "/webhook") {
     try { await webhookCallback(bot, "http")(req, res); }
