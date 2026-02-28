@@ -14,7 +14,7 @@ const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_KEY;
 const WEBAPP_URL = process.env.WEBAPP_URL || "https://igor-ivanov-consult.lovable.app";
 const PORT = process.env.PORT || 3000;
-const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "change-me-in-env";
+const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "igor-bot-secret-2026";
 
 if (!BOT_TOKEN) throw new Error("TELEGRAM_BOT_TOKEN required");
 if (!SUPABASE_URL) throw new Error("SUPABASE_URL required");
@@ -23,6 +23,11 @@ if (!SUPABASE_KEY) throw new Error("SUPABASE_SERVICE_KEY required");
 const bot = new Bot(BOT_TOKEN);
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const BOT_USERNAME = "igor_ivanov_consult_bot";
+
+// Глобальный обработчик ошибок — не даёт боту крашить webhook
+bot.catch((err) => {
+  console.error("Bot error:", err.message || err);
+});
 
 // ─── DATA ───────────────────────────────────────────────────
 
@@ -131,7 +136,7 @@ function mainMenu() {
     .text("📖 Забрать книгу", "get_book").text("🎰 Рулетка", "open_roulette").row()
     .webApp("🤖 Mini App", WEBAPP_URL).row()
     .text("📊 Профиль", "my_profile").text("🏆 Топ", "leaderboard").row()
-    .webApp("🤝 Стать партнёром", `${WEBAPP_URL}/partner`);
+    .text("🤝 Стать партнёром", "become_partner");
 }
 
 // ─── /start ─────────────────────────────────────────────────
@@ -158,7 +163,7 @@ async function welcome(ctx) {
     `📚 Бесплатные бизнес-книги\n` +
     `📋 Чек-лист «5 точек роста» в подарок\n` +
     `🎰 Рулетка призов\n` +
-    `🎁 Розыгрыш ИИ-экосистемы (230 000 ₽)\n\n` +
+    `🎁 Розыгрыш КОМБО-экосистемы (120 000 ₽)\n\n` +
     `Заберите книгу + бонусы 👇`,
     { parse_mode: "Markdown", reply_markup: mainMenu() }
   );
@@ -171,7 +176,7 @@ async function welcomeGroup(ctx) {
     `📚 Книги бесплатно\n` +
     `📋 Чек-лист «5 точек роста»\n` +
     `🎰 Рулетка подарков\n` +
-    `🎁 Розыгрыш ИИ-экосистемы (230 000 ₽)\n\n` +
+    `🎁 Розыгрыш КОМБО (120 000 ₽)\n\n` +
     `Забирайте 👇`,
     {
       parse_mode: "Markdown",
@@ -251,9 +256,9 @@ bot.callbackQuery(/^sub:(\d+):(.+)$/, async (ctx) => {
     {
       parse_mode: "Markdown",
       reply_markup: new InlineKeyboard()
-        .text("📥 1. Читать книгу", `download_${bookId}`).row()
+        .text("📥 1. Скачать книгу", `download_${bookId}`).row()
         .text("📋 2. Получить чек-лист", "send_checklist").row()
-        .url("🎰 3. Крутить рулетку!", `https://t.me/${BOT_USERNAME}/app?startapp=roulette`).row()
+        .webApp("🎰 3. Крутить рулетку!", `${WEBAPP_URL}?screen=roulette`).row()
         .text("🎁 Подарить книгу другу = +1 🎟", `gift_${bookId}`),
     }
   );
@@ -349,20 +354,20 @@ bot.callbackQuery("get_book", async (ctx) => {
 });
 
 bot.callbackQuery(/^download_(.+)$/, async (ctx) => {
-  await ctx.answerCallbackQuery("📖 Открываем...");
+  await ctx.answerCallbackQuery("📥 Отправляем...");
   const bookId = ctx.match[1];
   const b = BOOKS[bookId] || BOOKS["partnership-strategy"];
 
+  // TODO: await ctx.replyWithDocument(b.pdf_file_id); — после загрузки PDF
   await ctx.reply(
-    `📖 *«${b.title}»*\n\n` +
-    `${b.description}\n\n` +
-    `Внутри: 5 стратегий кросс-маркетинга, 16 приёмов работы с партнёрами, скрипты переговоров и кейсы.\n\n` +
-    `Читайте прямо здесь 👇`,
+    `📥 *«${b.title}»*\n\n` +
+    `⏳ PDF загружается — отправим сюда автоматически.\n\n` +
+    `А пока — заберите остальные подарки 👇`,
     {
       parse_mode: "Markdown",
       reply_markup: new InlineKeyboard()
-        .url("📖 Читать книгу", `https://t.me/${BOT_USERNAME}/app?startapp=book`).row()
         .text("📋 Чек-лист «5 точек роста»", "send_checklist").row()
+        .webApp("🎰 Крутить рулетку", `${WEBAPP_URL}?screen=roulette`).row()
         .text("🎁 Подарить книгу другу", `gift_${bookId}`).row()
         .text("« Меню", "main_menu"),
     }
@@ -387,7 +392,7 @@ bot.callbackQuery("send_checklist", async (ctx) => {
         {
           parse_mode: "Markdown",
           reply_markup: new InlineKeyboard()
-            .url("🎰 Крутить рулетку!", `https://t.me/${BOT_USERNAME}/app?startapp=roulette`).row()
+            .webApp("🎰 Крутить рулетку!", `${WEBAPP_URL}?screen=roulette`).row()
             .webApp("🤖 Калькуляторы", WEBAPP_URL).row()
             .text("🎁 Подарить книгу = +1 🎟", "gift_partnership-strategy").row()
             .text("« Меню", "main_menu"),
@@ -404,28 +409,20 @@ bot.callbackQuery(/^gift_(.+)$/, async (ctx) => {
   const bookId = ctx.match[1];
   const b = BOOKS[bookId] || BOOKS["partnership-strategy"];
   const url = `https://t.me/${BOT_USERNAME}?start=gift_${ctx.from.id}_${bookId}`;
-  const senderName = ctx.from?.first_name || "Друг";
-
-  const shareText =
-    `🎁 ${senderName} дарит тебе бизнес-книгу!\n\n` +
-    `${b.emoji} «${b.title}» — ${b.author}\n\n` +
-    `Внутри 3 подарка:\n` +
-    `📖 Книга в PDF\n` +
-    `📋 Чек-лист «5 точек роста»\n` +
-    `🎰 Спин рулетки призов\n\n` +
-    `👇 Забирай подарок:`;
+  const shareText = `📚 Дарю тебе книгу «${b.title}» от эксперта Игоря Иванова!\n\n🎁 Внутри: книга + чек-лист + спин рулетки!\n\nЗабирай:`;
 
   await safeEdit(ctx,
     `🎁 *Подарите книгу = 🎟 билет*\n\n` +
     `${b.emoji} «${b.title}»\n\n` +
+    `Ваша ссылка:\n\`${url}\`\n\n` +
     `📤 Отправьте другу. Когда он *подпишется* — вы получите 🎟\n\n` +
     `Друг получит *3 подарка:*\n` +
     `📖 Книгу  📋 Чек-лист  🎰 Рулетку\n\n` +
-    `_🎟×5 = розыгрыш ИИ-экосистемы (230 000 ₽)_`,
+    `_🎟×5 = розыгрыш КОМБО (120 000 ₽)_`,
     {
       parse_mode: "Markdown",
       reply_markup: new InlineKeyboard()
-        .url("🎁 Отправить подарок другу", `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(shareText)}`).row()
+        .url("📤 Отправить в Telegram", `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(shareText)}`).row()
         .text("📖 Другую книгу", "book_list").row()
         .text("🎟 Мои билеты", "my_tickets").text("« Меню", "main_menu"),
     }
@@ -457,7 +454,7 @@ bot.callbackQuery("my_tickets", async (ctx) => {
     `${ticketBar(t)}\n\n` +
     `Билетов: *${t}*\nПодарено: *${g}* 📚\nАчивка: ${a.emoji} ${a.name}\n\n` +
     `${t < 5 ? `Ещё *${Math.max(5-g,0)}* подарков для участия!` : `✅ *Вы участвуете!*`}\n\n` +
-    `🏆 Приз: ИИ-экосистема (230 000 ₽)`,
+    `🏆 Приз: КОМБО-экосистема (120 000 ₽)`,
     {
       parse_mode: "Markdown",
       reply_markup: new InlineKeyboard()
@@ -526,7 +523,7 @@ bot.callbackQuery("open_roulette", async (ctx) => {
   await safeEdit(ctx,
     `🎰 *Рулетка подарков*\n\n` +
     `Призы:\n` +
-    `🎯 Стратсессия 45мин (50 000₽)\n` +
+    `🎯 Стратсессия 45мин (25 000₽)\n` +
     `🔥 Скидка 30 000₽ на КОМБО\n` +
     `🎁 Месяц сопровождения\n` +
     `🤖 ИИ-аудит бизнеса\n` +
@@ -538,7 +535,7 @@ bot.callbackQuery("open_roulette", async (ctx) => {
     {
       parse_mode: "Markdown",
       reply_markup: new InlineKeyboard()
-        .url("🎰 Крутить!", `https://t.me/${BOT_USERNAME}/app?startapp=roulette`).row()
+        .webApp("🎰 Крутить!", `${WEBAPP_URL}?screen=roulette`).row()
         .text("« Меню", "main_menu"),
     }
   );
@@ -573,7 +570,7 @@ bot.callbackQuery("become_partner", async (ctx) => {
 bot.callbackQuery("partner_stats", async (ctx) => {
   await ctx.answerCallbackQuery();
   const { data: r } = await supabase.from("referrers").select("*").eq("telegram_id", ctx.from?.id).single();
-  if (!r) return ctx.reply("Вы не партнёр.", { reply_markup: new InlineKeyboard().webApp("🤝 Стать", `${WEBAPP_URL}/partner`).text("« Меню", "main_menu") });
+  if (!r) return ctx.reply("Вы не партнёр.", { reply_markup: new InlineKeyboard().text("🤝 Стать", "become_partner").text("« Меню", "main_menu") });
 
   await safeEdit(ctx,
     `📈 *Статистика*\n\n👆 ${r.total_clicks}\n👤 ${r.total_leads}\n💰 ${r.total_conversions}\n💵 ${r.total_earned.toLocaleString("ru")} ₽\n\nБаланс: *${r.balance.toLocaleString("ru")} ₽*`,
@@ -590,7 +587,7 @@ bot.callbackQuery("partner_stats", async (ctx) => {
 bot.callbackQuery("partner_balance", async (ctx) => {
   await ctx.answerCallbackQuery();
   const { data: r } = await supabase.from("referrers").select("*").eq("telegram_id", ctx.from?.id).single();
-  if (!r) return ctx.reply("Вы не партнёр.", { reply_markup: new InlineKeyboard().webApp("🤝 Стать", `${WEBAPP_URL}/partner`) });
+  if (!r) return ctx.reply("Вы не партнёр.", { reply_markup: new InlineKeyboard().text("🤝 Стать", "become_partner") });
 
   await safeEdit(ctx,
     `💰 *Баланс*\n\nК выводу: *${r.balance.toLocaleString("ru")} ₽*\nВсего: *${r.total_earned.toLocaleString("ru")} ₽*\n\n` +
@@ -628,11 +625,17 @@ bot.on("message:text", async (ctx) => {
 const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && req.url === "/") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "ok", bot: BOT_USERNAME, v: "2.1-partner-webapp" }));
+    return res.end(JSON.stringify({ status: "ok", bot: BOT_USERNAME, v: "2.2-proxy-mode" }));
   }
   if (req.method === "POST" && req.url === "/webhook") {
-    try { await webhookCallback(bot, "http")(req, res); }
-    catch (e) { console.error("WH:", e); res.writeHead(500); res.end(); }
+    try {
+      console.log(`📨 Webhook received`);
+      await webhookCallback(bot, "http")(req, res);
+    }
+    catch (e) {
+      console.error("WH error:", e.message || e);
+      if (!res.headersSent) { res.writeHead(200); res.end(JSON.stringify({ ok: true })); }
+    }
     return;
   }
   if (req.method === "POST" && req.url === "/notify") {
@@ -668,15 +671,11 @@ async function notify({ type, telegram_id: tid, payload: p }) {
 }
 
 // ─── START ──────────────────────────────────────────────────
+// НЕ вызываем setWebhook — webhook установлен на Supabase,
+// которая проксирует запросы сюда через HTTP POST /webhook
 
 (async () => {
-  if (process.env.RENDER_EXTERNAL_URL) {
-    await bot.api.setWebhook(`${process.env.RENDER_EXTERNAL_URL}/webhook`);
-    console.log(`🤖 Webhook: ${process.env.RENDER_EXTERNAL_URL}/webhook`);
-    server.listen(PORT, () => console.log(`🚀 Port ${PORT}`));
-  } else {
-    await bot.api.deleteWebhook();
-    server.listen(PORT, () => console.log(`🚀 Dev :${PORT}`));
-    bot.start({ onStart: () => console.log("✅ Running!") });
-  }
+  // НЕ трогаем webhook — им управляет Supabase telegram-webhook
+  console.log(`🤖 Bot ready (proxy mode). Webhook managed by Supabase.`);
+  server.listen(PORT, () => console.log(`🚀 Port ${PORT}`));
 })().catch(e => { console.error("Fatal:", e); process.exit(1); });
