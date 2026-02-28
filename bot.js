@@ -29,6 +29,21 @@ bot.catch((err) => {
   console.error("Bot error:", err.message || err);
 });
 
+// Перехват ошибок answerCallbackQuery — при проксировании через Supabase
+// callback устаревает и Telegram отвечает 400. Игнорируем эту ошибку,
+// остальная логика (отправка сообщений, edit) работает нормально.
+bot.api.config.use(async (prev, method, payload) => {
+  try {
+    return await prev(method, payload);
+  } catch (e) {
+    if (method === "answerCallbackQuery") {
+      console.log(`⚠️ answerCallbackQuery timeout (proxy delay) — ignoring`);
+      return { ok: true, result: true };
+    }
+    throw e;
+  }
+});
+
 // ─── DATA ───────────────────────────────────────────────────
 
 const BOOKS = {
@@ -625,7 +640,7 @@ bot.on("message:text", async (ctx) => {
 const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && req.url === "/") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "ok", bot: BOT_USERNAME, v: "2.2-proxy-mode" }));
+    return res.end(JSON.stringify({ status: "ok", bot: BOT_USERNAME, v: "2.3-callback-fix" }));
   }
   if (req.method === "POST" && req.url === "/webhook") {
     try {
