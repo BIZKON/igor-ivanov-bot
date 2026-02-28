@@ -21,28 +21,23 @@ if (!SUPABASE_URL) throw new Error("SUPABASE_URL required");
 if (!SUPABASE_KEY) throw new Error("SUPABASE_SERVICE_KEY required");
 
 const bot = new Bot(BOT_TOKEN);
+
+// ─── ФИКС: answerCallbackQuery timeout (Telegram лимит ~30 сек) ─────
+// Цепочка Telegram → Supabase → Render иногда занимает >30 сек.
+// Grammy кидает ошибку и весь обработчик падает. Молча игнорируем.
+bot.api.config.use(async (prev, method, payload, signal) => {
+  if (method === "answerCallbackQuery") {
+    try { return await prev(method, payload, signal); }
+    catch (e) {
+      if (e?.error_code === 400 && e?.description?.includes("query is too old")) return { ok: true };
+      throw e;
+    }
+  }
+  return prev(method, payload, signal);
+});
+
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const BOT_USERNAME = "igor_ivanov_consult_bot";
-
-// Глобальный обработчик ошибок — не даёт боту крашить webhook
-bot.catch((err) => {
-  console.error("Bot error:", err.message || err);
-});
-
-// Перехват ошибок answerCallbackQuery — при проксировании через Supabase
-// callback устаревает и Telegram отвечает 400. Игнорируем эту ошибку,
-// остальная логика (отправка сообщений, edit) работает нормально.
-bot.api.config.use(async (prev, method, payload) => {
-  try {
-    return await prev(method, payload);
-  } catch (e) {
-    if (method === "answerCallbackQuery") {
-      console.log(`⚠️ answerCallbackQuery timeout (proxy delay) — ignoring`);
-      return { ok: true, result: true };
-    }
-    throw e;
-  }
-});
 
 // ─── DATA ───────────────────────────────────────────────────
 
@@ -273,7 +268,7 @@ bot.callbackQuery(/^sub:(\d+):(.+)$/, async (ctx) => {
       reply_markup: new InlineKeyboard()
         .text("📥 1. Скачать книгу", `download_${bookId}`).row()
         .text("📋 2. Получить чек-лист", "send_checklist").row()
-        .webApp("🎰 3. Крутить рулетку!", `${WEBAPP_URL}?screen=roulette`).row()
+        .webApp("🎰 3. Крутить рулетку!", `${WEBAPP_URL}?startapp=bot`).row()
         .text("🎁 Подарить книгу другу = +1 🎟", `gift_${bookId}`),
     }
   );
@@ -382,7 +377,7 @@ bot.callbackQuery(/^download_(.+)$/, async (ctx) => {
       parse_mode: "Markdown",
       reply_markup: new InlineKeyboard()
         .text("📋 Чек-лист «5 точек роста»", "send_checklist").row()
-        .webApp("🎰 Крутить рулетку", `${WEBAPP_URL}?screen=roulette`).row()
+        .webApp("🎰 Крутить рулетку", `${WEBAPP_URL}?startapp=bot`).row()
         .text("🎁 Подарить книгу другу", `gift_${bookId}`).row()
         .text("« Меню", "main_menu"),
     }
@@ -407,7 +402,7 @@ bot.callbackQuery("send_checklist", async (ctx) => {
         {
           parse_mode: "Markdown",
           reply_markup: new InlineKeyboard()
-            .webApp("🎰 Крутить рулетку!", `${WEBAPP_URL}?screen=roulette`).row()
+            .webApp("🎰 Крутить рулетку!", `${WEBAPP_URL}?startapp=bot`).row()
             .webApp("🤖 Калькуляторы", WEBAPP_URL).row()
             .text("🎁 Подарить книгу = +1 🎟", "gift_partnership-strategy").row()
             .text("« Меню", "main_menu"),
@@ -550,7 +545,7 @@ bot.callbackQuery("open_roulette", async (ctx) => {
     {
       parse_mode: "Markdown",
       reply_markup: new InlineKeyboard()
-        .webApp("🎰 Крутить!", `${WEBAPP_URL}?screen=roulette`).row()
+        .webApp("🎰 Крутить!", `${WEBAPP_URL}?startapp=bot`).row()
         .text("« Меню", "main_menu"),
     }
   );
@@ -640,17 +635,11 @@ bot.on("message:text", async (ctx) => {
 const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && req.url === "/") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "ok", bot: BOT_USERNAME, v: "2.3-callback-fix" }));
+    return res.end(JSON.stringify({ status: "ok", bot: BOT_USERNAME, v: "2.1-callback-fix" }));
   }
   if (req.method === "POST" && req.url === "/webhook") {
-    try {
-      console.log(`📨 Webhook received`);
-      await webhookCallback(bot, "http")(req, res);
-    }
-    catch (e) {
-      console.error("WH error:", e.message || e);
-      if (!res.headersSent) { res.writeHead(200); res.end(JSON.stringify({ ok: true })); }
-    }
+    try { await webhookCallback(bot, "http")(req, res); }
+    catch (e) { console.error("WH:", e); res.writeHead(500); res.end(); }
     return;
   }
   if (req.method === "POST" && req.url === "/notify") {
@@ -686,11 +675,15 @@ async function notify({ type, telegram_id: tid, payload: p }) {
 }
 
 // ─── START ──────────────────────────────────────────────────
-// НЕ вызываем setWebhook — webhook установлен на Supabase,
-// которая проксирует запросы сюда через HTTP POST /webhook
 
 (async () => {
-  // НЕ трогаем webhook — им управляет Supabase telegram-webhook
-  console.log(`🤖 Bot ready (proxy mode). Webhook managed by Supabase.`);
-  server.listen(PORT, () => console.log(`🚀 Port ${PORT}`));
+  if (process.env.RENDER_EXTERNAL_URL) {
+    await bot.api.setWebhook(`${process.env.RENDER_EXTERNAL_URL}/webhook`);
+    console.log(`🤖 Webhook: ${process.env.RENDER_EXTERNAL_URL}/webhook`);
+    server.listen(PORT, () => console.log(`🚀 Port ${PORT}`));
+  } else {
+    await bot.api.deleteWebhook();
+    server.listen(PORT, () => console.log(`🚀 Dev :${PORT}`));
+    bot.start({ onStart: () => console.log("✅ Running!") });
+  }
 })().catch(e => { console.error("Fatal:", e); process.exit(1); });
