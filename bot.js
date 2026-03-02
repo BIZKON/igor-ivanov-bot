@@ -1,7 +1,7 @@
 // ============================================================
 // TELEGRAM BOT: Игорь Иванов | Консалтинг
-// v3: цветные кнопки (Bot API 9.4) + WriteAccessAllowed + broadcast
-// Требует: Telegram Premium у владельца бота для icon_custom_emoji_id
+// v3: цветные кнопки Bot API 9.4 (success/primary/danger) + Premium
+// Только inline-кнопки, без slash-команд
 // ============================================================
 
 const { Bot, webhookCallback } = require("grammy");
@@ -21,56 +21,43 @@ if (!SUPABASE_URL) throw new Error("SUPABASE_URL required");
 if (!SUPABASE_KEY) throw new Error("SUPABASE_SERVICE_KEY required");
 
 const bot = new Bot(BOT_TOKEN);
+
+// ─── ФИКС: answerCallbackQuery timeout (Telegram лимит ~30 сек) ─────
+// Цепочка Telegram → Supabase → Render иногда занимает >30 сек.
+// Grammy кидает ошибку и весь обработчик падает. Молча игнорируем.
+bot.api.config.use(async (prev, method, payload, signal) => {
+  if (method === "answerCallbackQuery") {
+    try { return await prev(method, payload, signal); }
+    catch (e) {
+      if (e?.error_code === 400 && e?.description?.includes("query is too old")) return { ok: true };
+      throw e;
+    }
+  }
+  return prev(method, payload, signal);
+});
+
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const BOT_USERNAME = "igor_ivanov_consult_bot";
 
 // ═══════════════════════════════════════════════════════════
-//  КНОПКИ С ЦВЕТАМИ (Bot API 9.4 + Telegram Premium)
-//  style: "success" (🟢), "primary" (🔵), "danger" (🔴)
-//  icon_custom_emoji_id — премиум-эмодзи перед текстом кнопки
+//  ЦВЕТНЫЕ КНОПКИ (Bot API 9.4 + Telegram Premium)
+//  success=🟢  primary=🔵  danger=🔴  (без style = серый)
 // ═══════════════════════════════════════════════════════════
-
-// Кастомные эмодзи IDs (Telegram Premium, владелец бота)
-// Получить ID: отправь сообщение с эмодзи боту @getidsbot
-// или команда /emoji в этом боте
-const EMOJI = {
-  book:    "📖",  // fallback — используем unicode если нет кастомного ID
-  roulette: "🎰",
-  app:     "🤖",
-  profile: "📊",
-  top:     "🏆",
-  partner: "🤝",
-  gift:    "🎁",
-  ticket:  "🎟",
-  link:    "📤",
-  stats:   "📈",
-  balance: "💰",
-  withdraw: "💸",
-  menu:    "◀",
-  check:   "✅",
-  bell:    "🔕",
-};
-
-// Базовые строители кнопок
-function cbBtn(text, data, style = null, emojiId = null) {
-  const btn = { text, callback_data: data };
-  if (style) btn.style = style;
-  if (emojiId) btn.icon_custom_emoji_id = emojiId;
-  return btn;
+function cbBtn(text, data, style) {
+  const b = { text, callback_data: data };
+  if (style) b.style = style;
+  return b;
 }
-function urlBtn(text, url, style = null, emojiId = null) {
-  const btn = { text, url };
-  if (style) btn.style = style;
-  if (emojiId) btn.icon_custom_emoji_id = emojiId;
-  return btn;
+function urlBtn(text, url, style) {
+  const b = { text, url };
+  if (style) b.style = style;
+  return b;
 }
-function appBtn(text, url, style = null, emojiId = null) {
-  const btn = { text, web_app: { url } };
-  if (style) btn.style = style;
-  if (emojiId) btn.icon_custom_emoji_id = emojiId;
-  return btn;
+function appBtn(text, url, style) {
+  const b = { text, web_app: { url } };
+  if (style) b.style = style;
+  return b;
 }
-// Построитель reply_markup из массива строк (массив массивов кнопок)
 function kb(...rows) {
   return { inline_keyboard: rows.map(r => Array.isArray(r) ? r : [r]) };
 }
@@ -157,35 +144,10 @@ async function getUser(ctx) {
   const t = ctx.from;
   if (!t) return null;
   const { data: u } = await supabase.from("user_profiles").select("*").eq("telegram_id", t.id).single();
-  if (u) {
-    // Обновляем имя/username если изменились + ставим флаги если их нет
-    const needsUpdate = u.first_name !== (t.first_name || "") || u.username !== (t.username || "") || !u.bot_started_at;
-    if (needsUpdate) {
-      supabase.from("user_profiles").update({
-        first_name: t.first_name || "",
-        last_name: t.last_name || "",
-        username: t.username || "",
-        is_bot_user: true,
-        can_broadcast: true,
-        last_active_at: new Date().toISOString(),
-        ...(u.bot_started_at ? {} : { bot_started_at: new Date().toISOString() }),
-      }).eq("telegram_id", t.id).then(() => {}).catch(() => {});
-    }
-    return u;
-  }
-  // Новый пользователь
+  if (u) return u;
   const { data: c } = await supabase.from("user_profiles").insert({
-    telegram_id: t.id,
-    first_name: t.first_name || "",
-    last_name: t.last_name || "",
-    username: t.username || "",
-    total_gifts: 0,
-    total_tickets: 0,
-    achievement_level: "reader",
-    is_bot_user: true,
-    can_broadcast: true,
-    bot_started_at: new Date().toISOString(),
-    last_active_at: new Date().toISOString(),
+    telegram_id: t.id, first_name: t.first_name || "", last_name: t.last_name || "",
+    username: t.username || "", total_gifts: 0, total_tickets: 0, achievement_level: "reader",
   }).select().single();
   return c;
 }
@@ -236,7 +198,7 @@ async function welcome(ctx) {
     `📚 Бесплатные бизнес-книги\n` +
     `📋 Чек-лист «5 точек роста» в подарок\n` +
     `🎰 Рулетка призов\n` +
-    `🎁 Розыгрыш КОМБО-экосистемы (120 000 ₽)\n\n` +
+    `🎁 Розыгрыш ИИ-Экосистемы (230 000 ₽)\n\n` +
     `Заберите книгу + бонусы 👇`,
     { parse_mode: "Markdown", reply_markup: mainMenu() }
   );
@@ -249,7 +211,7 @@ async function welcomeGroup(ctx) {
     `📚 Книги бесплатно\n` +
     `📋 Чек-лист «5 точек роста»\n` +
     `🎰 Рулетка подарков\n` +
-    `🎁 Розыгрыш КОМБО (120 000 ₽)\n\n` +
+    `🎁 Розыгрыш ИИ-Экосистемы (230 000 ₽)\n\n` +
     `Забирайте 👇`,
     {
       parse_mode: "Markdown",
@@ -332,8 +294,8 @@ bot.callbackQuery(/^sub:(\d+):(.+)$/, async (ctx) => {
       reply_markup: kb(
         [cbBtn("📥 1. Скачать книгу", `download_${bookId}`, "primary")],
         [cbBtn("📋 2. Получить чек-лист", "send_checklist", "primary")],
-        [appBtn("🎰 3. Крутить рулетку!", `${WEBAPP_URL}?startapp=bot`, "success")],
-        [cbBtn("🎁 Подарить книгу другу = +1 🎟", `gift_${bookId}`)]
+        [appBtn("🎰 3. Крутить рулетку!", `https://igor-ivanov-consult.lovable.app/roulette`, "success")],
+        [cbBtn("🎁 Подарить книгу другу = +1 🎟", `gift_${bookId}`, "success")]
       ),
     }
   );
@@ -354,7 +316,7 @@ bot.callbackQuery("about_bot", async (ctx) => {
     `❌ Спама (макс 2-3 сообщения/неделю)\n` +
     `❌ Продаж в лоб\n\n` +
     `_Отписаться можно в любой момент._`,
-    { parse_mode: "Markdown", reply_markup: kb([cbBtn("◀ Назад", "main_menu")]) }
+    { parse_mode: "Markdown", reply_markup: kb([cbBtn("⬅️ Назад", "main_menu")]) }
   );
 });
 
@@ -372,7 +334,7 @@ async function notifyGifter(gifterId, bookId, receiverName) {
       `*${receiverName}* подписался и забрал «${book.title}»!\n\n` +
       `${ticketBar(tickets)} *${tickets}* из 5\n`;
 
-    if (tickets < 5) text += `\nЕщё *${5 - tickets}* — и вы в розыгрыше КОМБО! 🎰`;
+    if (tickets < 5) text += `\nЕщё *${5 - tickets}* — и вы в розыгрыше ИИ-Экосистемы! 🎰`;
     else text += `\n✅ *Вы в розыгрыше!* Больше билетов = выше шанс 🔥`;
 
     // Проверяем ачивку
@@ -415,7 +377,7 @@ bot.callbackQuery("get_book", async (ctx) => {
     `📖 *Книга месяца:*\n\n` +
     `${b.emoji} *«${b.title}»*\n_${b.author}_\n\n${b.description}\n\n` +
     `━━━━━━━━━━━━━━━━━━━━\n\n` +
-    `🎁 Подарите другу = 🎟 билет на розыгрыш КОМБО!\n5 билетов = участие`,
+    `🎁 Подарите другу = 🎟 билет на розыгрыш ИИ-Экосистемы!\n5 билетов = участие`,
     {
       parse_mode: "Markdown",
       reply_markup: kb(
@@ -423,7 +385,7 @@ bot.callbackQuery("get_book", async (ctx) => {
         [cbBtn("🎁 Подарить другу = +1 🎟", "gift_partnership-strategy", "success")],
         [cbBtn("📋 Чек-лист «5 точек роста»", "send_checklist", "primary")],
         [cbBtn("🎟 Мои билеты", "my_tickets"), cbBtn("🏆 Топ", "leaderboard")],
-        [cbBtn("◀ Меню", "main_menu")]
+        [cbBtn("⬅️ В меню", "main_menu")]
       ),
     }
   );
@@ -443,9 +405,9 @@ bot.callbackQuery(/^download_(.+)$/, async (ctx) => {
       parse_mode: "Markdown",
       reply_markup: kb(
         [cbBtn("📋 Чек-лист «5 точек роста»", "send_checklist", "primary")],
-        [appBtn("🎰 Крутить рулетку", `${WEBAPP_URL}?startapp=bot`, "success")],
+        [appBtn("🎰 Крутить рулетку", `https://igor-ivanov-consult.lovable.app/roulette`, "success")],
         [cbBtn("🎁 Подарить книгу другу", `gift_${bookId}`, "success")],
-        [cbBtn("◀ Меню", "main_menu")]
+        [cbBtn("⬅️ В меню", "main_menu")]
       ),
     }
   );
@@ -469,10 +431,10 @@ bot.callbackQuery("send_checklist", async (ctx) => {
         {
           parse_mode: "Markdown",
           reply_markup: kb(
-            [appBtn("🎰 Крутить рулетку!", `${WEBAPP_URL}?startapp=bot`, "success")],
+            [appBtn("🎰 Крутить рулетку!", `https://igor-ivanov-consult.lovable.app/roulette`, "success")],
             [appBtn("🤖 Калькуляторы", WEBAPP_URL, "primary")],
             [cbBtn("🎁 Подарить книгу = +1 🎟", "gift_partnership-strategy", "success")],
-            [cbBtn("◀ Меню", "main_menu")]
+            [cbBtn("⬅️ В меню", "main_menu")]
           ),
         }
       );
@@ -496,13 +458,13 @@ bot.callbackQuery(/^gift_(.+)$/, async (ctx) => {
     `📤 Отправьте другу. Когда он *подпишется* — вы получите 🎟\n\n` +
     `Друг получит *3 подарка:*\n` +
     `📖 Книгу  📋 Чек-лист  🎰 Рулетку\n\n` +
-    `_🎟×5 = розыгрыш КОМБО (120 000 ₽)_`,
+    `_🎟×5 = розыгрыш ИИ-Экосистемы (230 000 ₽)_`,
     {
       parse_mode: "Markdown",
       reply_markup: kb(
         [urlBtn("📤 Отправить в Telegram", `https://t.me/share/url?url=${encodeURIComponent(url)}&text=${encodeURIComponent(shareText)}`, "success")],
         [cbBtn("📖 Другую книгу", "book_list")],
-        [cbBtn("🎟 Мои билеты", "my_tickets"), cbBtn("◀ Меню", "main_menu")]
+        [cbBtn("🎟 Мои билеты", "my_tickets"), cbBtn("⬅️ В меню", "main_menu")]
       ),
     }
   );
@@ -516,7 +478,7 @@ bot.callbackQuery("book_list", async (ctx) => {
     t += `${b.emoji} «${b.title}» — _${b.author}_\n`;
     rows.push([cbBtn(`${b.emoji} ${b.title}`, `gift_${id}`, "success")]);
   }
-  rows.push([cbBtn("◀ Меню", "main_menu")]);
+  rows.push([cbBtn("⬅️ В меню", "main_menu")]);
   await safeEdit(ctx, t, { parse_mode: "Markdown", reply_markup: { inline_keyboard: rows } });
 });
 
@@ -533,12 +495,12 @@ bot.callbackQuery("my_tickets", async (ctx) => {
     `${ticketBar(t)}\n\n` +
     `Билетов: *${t}*\nПодарено: *${g}* 📚\nАчивка: ${a.emoji} ${a.name}\n\n` +
     `${t < 5 ? `Ещё *${Math.max(5-g,0)}* подарков для участия!` : `✅ *Вы участвуете!*`}\n\n` +
-    `🏆 Приз: КОМБО-экосистема (120 000 ₽)`,
+    `🏆 Приз: ИИ-Экосистема (230 000 ₽)`,
     {
       parse_mode: "Markdown",
       reply_markup: kb(
         [cbBtn("🎁 Подарить = +1 🎟", "gift_partnership-strategy", "success")],
-        [cbBtn("🏆 Топ", "leaderboard"), cbBtn("◀ Меню", "main_menu")]
+        [cbBtn("🏆 Топ", "leaderboard"), cbBtn("⬅️ В меню", "main_menu")]
       ),
     }
   );
@@ -568,7 +530,7 @@ bot.callbackQuery("my_profile", async (ctx) => {
     parse_mode: "Markdown",
     reply_markup: kb(
       [cbBtn("🎁 Подарить книгу", "gift_partnership-strategy", "success")],
-      [cbBtn("🏆 Топ", "leaderboard"), cbBtn("◀ Меню", "main_menu")]
+      [cbBtn("🏆 Топ", "leaderboard"), cbBtn("⬅️ В меню", "main_menu")]
     ),
   });
 });
@@ -593,7 +555,7 @@ bot.callbackQuery("leaderboard", async (ctx) => {
     parse_mode: "Markdown",
     reply_markup: kb(
       [cbBtn("🎁 Подарить книгу", "gift_partnership-strategy", "success")],
-      [cbBtn("📊 Профиль", "my_profile"), cbBtn("◀ Меню", "main_menu")]
+      [cbBtn("📊 Профиль", "my_profile"), cbBtn("⬅️ В меню", "main_menu")]
     ),
   });
 });
@@ -605,8 +567,8 @@ bot.callbackQuery("open_roulette", async (ctx) => {
   await safeEdit(ctx,
     `🎰 *Рулетка подарков*\n\n` +
     `Призы:\n` +
-    `🎯 Стратсессия 45мин (25 000₽)\n` +
-    `🔥 Скидка 30 000₽ на КОМБО\n` +
+    `🎯 Стратсессия 45мин (50 000₽)\n` +
+    `🔥 Скидка 50 000₽ на ИИ-Экосистему\n` +
     `🎁 Месяц сопровождения\n` +
     `🤖 ИИ-аудит бизнеса\n` +
     `💬 Демо чатбота\n` +
@@ -617,8 +579,8 @@ bot.callbackQuery("open_roulette", async (ctx) => {
     {
       parse_mode: "Markdown",
       reply_markup: kb(
-        [appBtn("🎰 Крутить!", `${WEBAPP_URL}?startapp=bot`, "success")],
-        [cbBtn("◀ Меню", "main_menu")]
+        [appBtn("🎰 Крутить!", `https://igor-ivanov-consult.lovable.app/roulette`, "success")],
+        [cbBtn("⬅️ В меню", "main_menu")]
       ),
     }
   );
@@ -630,31 +592,19 @@ bot.callbackQuery("open_roulette", async (ctx) => {
 
 bot.callbackQuery("become_partner", async (ctx) => {
   await ctx.answerCallbackQuery();
-  const r = await getReferrer(ctx.from);
-  if (!r) return safeEdit(ctx, "Ошибка.", { reply_markup: kb([cbBtn("◀ Меню", "main_menu")]) });
-
-  await safeEdit(ctx,
-    `🤝 *Партнёрская программа*\n\n` +
-    `Код: \`${r.ref_code}\`\nУровень: ${r.level} (${r.commission_rate}%)\n\n` +
-    `*Как работает:*\n1. Делитесь ссылкой\n2. Друзья покупают\n3. Вы получаете ${r.commission_rate}%\n\n` +
-    `*Уровни:*\n🟢 Start 10%\n🔵 Партнёр 15% (3+)\n🟣 VIP 20% (10+)\n\n` +
-    `Ссылка:\n\`https://t.me/${BOT_USERNAME}/app?startapp=ref_${r.ref_code}\``,
-    {
-      parse_mode: "Markdown",
-      reply_markup: kb(
-        [appBtn("📊 Кабинет", `${WEBAPP_URL}?startapp=partner_${r.ref_code}`, "primary")],
-        [urlBtn("📤 Поделиться", `https://t.me/share/url?url=${encodeURIComponent(`https://t.me/${BOT_USERNAME}/app?startapp=ref_${r.ref_code}`)}&text=${encodeURIComponent("Рекомендую эксперта по продажам — Игоря Иванова")}`, "success")],
-        [cbBtn("📈 Стата", "partner_stats"), cbBtn("💰 Баланс", "partner_balance")],
-        [cbBtn("◀ Меню", "main_menu")]
-      ),
-    }
-  );
+  await safeEdit(ctx, `🤝 *Партнёрская программа*\n\nОткрываю кабинет партнёра...`, {
+    parse_mode: "Markdown",
+    reply_markup: kb(
+      [appBtn("🤝 Открыть кабинет партнёра", `https://igor-ivanov-consult.lovable.app/partner`, "success")],
+      [cbBtn("⬅️ В меню", "main_menu")]
+    ),
+  });
 });
 
 bot.callbackQuery("partner_stats", async (ctx) => {
   await ctx.answerCallbackQuery();
   const { data: r } = await supabase.from("referrers").select("*").eq("telegram_id", ctx.from?.id).single();
-  if (!r) return ctx.reply("Вы не партнёр.", { reply_markup: kb([cbBtn("🤝 Стать партнёром", "become_partner", "success"), cbBtn("◀ Меню", "main_menu")]) });
+  if (!r) return ctx.reply("Вы не партнёр.", { reply_markup: kb([cbBtn("🤝 Стать партнёром", "become_partner", "success"), cbBtn("⬅️ В меню", "main_menu")]) });
 
   await safeEdit(ctx,
     `📈 *Статистика*\n\n👆 ${r.total_clicks}\n👤 ${r.total_leads}\n💰 ${r.total_conversions}\n💵 ${r.total_earned.toLocaleString("ru")} ₽\n\nБаланс: *${r.balance.toLocaleString("ru")} ₽*`,
@@ -663,7 +613,7 @@ bot.callbackQuery("partner_stats", async (ctx) => {
       reply_markup: kb(
         [cbBtn("💰 Вывести", "partner_withdraw", "success")],
         [appBtn("📊 Кабинет", `${WEBAPP_URL}?startapp=partner_${r.ref_code}`, "primary")],
-        [cbBtn("◀ Меню", "main_menu")]
+        [cbBtn("⬅️ В меню", "main_menu")]
       ),
     }
   );
@@ -681,7 +631,7 @@ bot.callbackQuery("partner_balance", async (ctx) => {
       parse_mode: "Markdown",
       reply_markup: kb(
         [cbBtn("💰 Вывести", "partner_withdraw", "success")],
-        [cbBtn("📈 Стата", "partner_stats"), cbBtn("◀ Меню", "main_menu")]
+        [cbBtn("📈 Стата", "partner_stats"), cbBtn("⬅️ В меню", "main_menu")]
       ),
     }
   );
@@ -690,113 +640,10 @@ bot.callbackQuery("partner_balance", async (ctx) => {
 bot.callbackQuery("partner_withdraw", async (ctx) => {
   await ctx.answerCallbackQuery();
   const { data: r } = await supabase.from("referrers").select("*").eq("telegram_id", ctx.from?.id).single();
-  if (!r || r.balance < 5000) return safeEdit(ctx, `⚠️ Мин: 5 000₽\nБаланс: ${(r?.balance||0).toLocaleString("ru")}₽`, { reply_markup: kb([cbBtn("◀ Меню", "main_menu")]) });
+  if (!r || r.balance < 5000) return safeEdit(ctx, `⚠️ Мин: 5 000₽\nБаланс: ${(r?.balance||0).toLocaleString("ru")}₽`, { reply_markup: kb([cbBtn("⬅️ В меню", "main_menu")]) });
 
   await supabase.from("payouts").insert({ referrer_id: r.id, amount: r.balance, method: "sbp", status: "pending" });
-  await safeEdit(ctx, `✅ *Заявка создана*\n\n${r.balance.toLocaleString("ru")} ₽ • СБП\nОбработаем за 48ч.`, { parse_mode: "Markdown", reply_markup: kb([cbBtn("◀ Меню", "main_menu")]) });
-});
-
-// ─── WRITE ACCESS ALLOWED ──────────────────────────────────
-// Срабатывает когда пользователь открыл Mini App по direct link
-// и нажал «Разрешить боту писать вам» (write_access_allowed=true в ссылке)
-
-bot.on("message:write_access_allowed", async (ctx) => {
-  const t = ctx.from;
-  if (!t) return;
-  const source = ctx.message?.write_access_allowed?.web_app_name || "direct_link";
-
-  await supabase.from("user_profiles").upsert({
-    telegram_id: t.id,
-    first_name: t.first_name || "",
-    last_name: t.last_name || "",
-    username: t.username || "",
-    is_bot_user: true,
-    is_app_visitor: true,
-    can_broadcast: true,
-    bot_started_at: new Date().toISOString(),
-    last_active_at: new Date().toISOString(),
-    write_access_source: source,
-    total_gifts: 0,
-    total_tickets: 0,
-    achievement_level: "reader",
-  }, { onConflict: "telegram_id", ignoreDuplicates: false });
-
-  console.log("WriteAccessAllowed:", t.id, "@" + (t.username || ""), "source=" + source);
-
-  await ctx.reply(
-    `✅ *Отлично, ${t.first_name || "друг"}!*\n\n` +
-    `Теперь я могу присылать вам полезные материалы по продажам и партнёрству.\n\n` +
-    `Держите подарок — книгу и чек-лист:`,
-    { parse_mode: "Markdown", reply_markup: mainMenu() }
-  );
-});
-
-// ─── BROADCAST ENGINE ──────────────────────────────────────
-
-async function broadcast({ text, buttons = [], filterFn = null, batchSize = 20, delayMs = 350 }) {
-  const { data: users, error } = await supabase
-    .from("user_profiles")
-    .select("telegram_id, first_name")
-    .eq("can_broadcast", true)
-    .eq("broadcast_opt_out", false);
-
-  if (error || !users?.length) {
-    console.log("Broadcast: no users", error?.message);
-    return { sent: 0, failed: 0, total: 0 };
-  }
-
-  const targets = filterFn ? users.filter(filterFn) : users;
-  console.log("Broadcast: sending to", targets.length, "users");
-
-  let sent = 0, failed = 0;
-
-  for (let i = 0; i < targets.length; i += batchSize) {
-    const batch = targets.slice(i, i + batchSize);
-
-    await Promise.allSettled(batch.map(async (u) => {
-      try {
-        const personalText = text.replace(/{name}/g, u.first_name || "друг");
-        const broadcastRows = (buttons || []).map(btn => {
-          if (btn.webapp) return [appBtn(btn.text, btn.webapp, "primary")];
-          if (btn.url) return [urlBtn(btn.text, btn.url, "success")];
-          return null;
-        }).filter(Boolean);
-        broadcastRows.push([cbBtn("🔕 Отписаться от рассылки", "broadcast_opt_out", "danger")]);
-        const broadcastKb = { inline_keyboard: broadcastRows };
-
-        await bot.api.sendMessage(u.telegram_id, personalText, {
-          parse_mode: "Markdown",
-          reply_markup: broadcastKb,
-        });
-        sent++;
-      } catch (e) {
-        if (e.error_code === 403) {
-          supabase.from("user_profiles")
-            .update({ can_broadcast: false })
-            .eq("telegram_id", u.telegram_id)
-            .then(() => {}).catch(() => {});
-        }
-        failed++;
-        console.error("Broadcast failed", u.telegram_id, e.message);
-      }
-    }));
-
-    if (i + batchSize < targets.length) {
-      await new Promise(r => setTimeout(r, delayMs));
-    }
-  }
-
-  console.log("Broadcast done:", sent, "sent,", failed, "failed");
-  return { sent, failed, total: targets.length };
-}
-
-// Кнопка отписки от рассылки
-bot.callbackQuery("broadcast_opt_out", async (ctx) => {
-  await ctx.answerCallbackQuery("Готово, больше не будем беспокоить 👍");
-  await supabase.from("user_profiles")
-    .update({ broadcast_opt_out: true })
-    .eq("telegram_id", ctx.from.id);
-  await ctx.editMessageReplyMarkup({ reply_markup: { inline_keyboard: [] } }).catch(() => {});
+  await safeEdit(ctx, `✅ *Заявка создана*\n\n${r.balance.toLocaleString("ru")} ₽ • СБП\nОбработаем за 48ч.`, { parse_mode: "Markdown", reply_markup: kb([cbBtn("⬅️ В меню", "main_menu")]) });
 });
 
 // ─── FALLBACK ───────────────────────────────────────────────
@@ -814,7 +661,7 @@ bot.on("message:text", async (ctx) => {
 const server = http.createServer(async (req, res) => {
   if (req.method === "GET" && req.url === "/") {
     res.writeHead(200, { "Content-Type": "application/json" });
-    return res.end(JSON.stringify({ status: "ok", bot: BOT_USERNAME, v: "2.0" }));
+    return res.end(JSON.stringify({ status: "ok", bot: BOT_USERNAME, v: "3.0-colored-buttons" }));
   }
   if (req.method === "POST" && req.url === "/webhook") {
     try { await webhookCallback(bot, "http")(req, res); }
@@ -834,39 +681,6 @@ const server = http.createServer(async (req, res) => {
     });
     return;
   }
-  if (req.method === "POST" && req.url === "/broadcast") {
-    const authKey = req.headers["x-broadcast-key"];
-    if (authKey !== process.env.BROADCAST_KEY) {
-      res.writeHead(401, { "Content-Type": "application/json" });
-      return res.end(JSON.stringify({ error: "Unauthorized" }));
-    }
-    let body = "";
-    req.on("data", c => body += c);
-    req.on("end", async () => {
-      try {
-        const { text, buttons, filter } = JSON.parse(body);
-        if (!text) { res.writeHead(400); return res.end(JSON.stringify({ error: "text required" })); }
-
-        // Фильтры сегментации
-        const filterFns = {
-          all:           null,
-          no_gifts:      u => !u.total_gifts || u.total_gifts === 0,
-          has_tickets:   u => u.total_tickets > 0,
-        };
-        const filterFn = filterFns[filter || "all"] ?? null;
-
-        const result = await broadcast({ text, buttons: buttons || [], filterFn });
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: true, ...result }));
-      } catch (e) {
-        console.error("Broadcast endpoint error:", e);
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: e.message }));
-      }
-    });
-    return;
-  }
-
   res.writeHead(404); res.end();
 });
 
@@ -882,7 +696,7 @@ async function notify({ type, telegram_id: tid, payload: p }) {
     weekly_report: `📊 *Неделя:* 👆${p?.clicks||0} 👤${p?.leads||0} 💰${p?.conversions||0} 💵${(p?.earned||0).toLocaleString("ru")}₽`,
   }[type];
   if (!m) return;
-  try { await bot.api.sendMessage(tid, m, { parse_mode: "Markdown", reply_markup: kb([cbBtn("📊 Стата", "partner_stats", "primary"), cbBtn("◀ Меню", "main_menu")]) }); }
+  try { await bot.api.sendMessage(tid, m, { parse_mode: "Markdown", reply_markup: kb([cbBtn("📊 Стата", "partner_stats", "primary"), cbBtn("⬅️ В меню", "main_menu")]) }); }
   catch (e) { console.error(`Notify ${tid}:`, e.message); }
 }
 
